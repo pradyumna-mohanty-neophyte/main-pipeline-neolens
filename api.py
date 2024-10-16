@@ -5,6 +5,7 @@ import time
 import cv2
 import uvicorn
 import asyncio
+from PIL import Image
 import httpx  # Import httpx for sending HTTP requests
 # import socketio
 # from fastapi_socketio import SocketManager
@@ -12,6 +13,7 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 from inf import CameraController  # Import your CameraController class
 from qwen_inference import ImageProcessor
+# from ProductDetector import ProductDetector
 from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI()
 
@@ -48,6 +50,12 @@ latest_metadata = None  # Variable to hold the latest metadata
 streaming_thread = threading.Thread(target=camera.stream, args=(30, 1), daemon=True)
 streaming_thread.start()
 
+# Initialize the Socket.IO client
+# sio = socketio.AsyncClient()
+
+# Define the connection URL to your Node.js server
+NODE_SERVER_URL = "http://localhost:5000/api/metadata"
+
 executor = ThreadPoolExecutor()
 
 @app.get("/video")
@@ -62,7 +70,8 @@ async def generate_frames():
         if camera.raw_image is not None:
             with camera.lock:
                 # Convert the latest frame to BGR format (OpenCV)
-                image_bgr = cv2.cvtColor(camera.raw_image[438:1638, 944:2144], cv2.COLOR_RGB2BGR)
+                # image_bgr = cv2.cvtColor(camera.raw_image[438:1638, 944:2144], cv2.COLOR_RGB2BGR)
+                image_bgr = cv2.cvtColor(camera.raw_image, cv2.COLOR_RGB2BGR)
                 # Resize or perform any preprocessing as needed
                 _, jpeg_frame = cv2.imencode('.jpg', image_bgr)
                 frame = jpeg_frame.tobytes()
@@ -74,117 +83,7 @@ async def generate_frames():
         # Small delay to prevent CPU overload
         await asyncio.sleep(0.05)
 
-
-@app.post("/capture-frame/")
-async def capture_frame(background_tasks: BackgroundTasks):
-    """API endpoint to capture a frame and process metadata."""
-    global new_metadata_available, latest_metadata
-    with camera.lock:
-        if camera.raw_image is not None:
-            # Crop the image to the ROI
-            cropped_image = camera.raw_image[438:1638, 944:2144]
-
-            # Get current datetime and format it for the filename
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            frame_name = f"CAP_{timestamp}.jpg"
-
-            # Schedule the image processing in the background to prevent blocking the main thread
-            background_tasks.add_task(process_image_task, cropped_image, frame_name=frame_name)
-            print(frame_name)
-            return {"status": "success", "message": "Image captured and being processed."}
-        else:
-            return {"status": "failure", "message": "No image data available."}
-            
-            # # Use qwen to process the cropped image
-            # metadata = qwen.process_image_from_array(cropped_image, frame_name=frame_name)
-            
-            # # Add metadata to the dataframe
-            # camera.add_to_dataframe(metadata)
-            
-            # # Save the dataframe to CSV
-            # if camera.df is not None and not camera.df.empty:
-            #     csv_save_path = "/home/neojetson/Projects/Main_Pipeline/results.csv"
-            #     camera.df.to_csv(csv_save_path, index=False)
-            #     print(f"CSV file saved successfully at: {csv_save_path}")
-            # else:
-            #     return {"status": "failure", "message": "DataFrame is empty or not defined. Cannot save CSV."}
-            
-            # Return the metadata as a response
-            # print("sending metadata to front end:", metadata)
-        #     return {"status": "success", "metadata": metadata}
-        # else:
-        #     return {"status": "failure", "message": "No image data available."}
-
-# @sio.on("metadata")
-# async def send_metadata_to_socket(metadata):
-#     """Send metadata to all connected clients via Socket.IO."""
-#     print("Sending metadata to frontend:", metadata)
-#     await sio.emit('metadata', {'data': metadata})
-
-
-def process_image_task(cropped_image, frame_name):
-    """Function to process image and save metadata. This runs in a separate thread."""
-    global new_metadata_available, latest_metadata
-    # Use qwen to process the cropped image
-    metadata = qwen.process_image_from_array(cropped_image, frame_name=frame_name)
-
-    # Acquire lock and update the metadata
-    with metadata_lock:
-        latest_metadata = metadata
-        new_metadata_available = True  # Set flag to indicate new metadata is available
-
-    # Automatically send the metadata to the Node.js server
-    st = time.time()
-    asyncio.run(send_metadata_to_node(metadata))
-    et = time.time()
-    print("py to node time:", et - st)
-
-async def send_metadata_to_node(metadata):
-    """Send the latest metadata to the Node.js server."""
-    node_server_url = "http://localhost:5000/api/metadata"  # Update with your Node.js server URL and endpoint
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(node_server_url, json={"metadata": metadata})
-            if response.status_code == 200:
-                print("Metadata successfully sent to Node.js server")
-            else:
-                print(f"Failed to send metadata to Node.js server: {response.status_code}")
-        except Exception as e:
-            print(f"Error sending metadata to Node.js server: {str(e)}")
-
     
-    # Add metadata to the dataframe
-    # camera.add_to_dataframe(metadata)
-    
-    # # Save the dataframe to CSV
-    # if camera.df is not None and not camera.df.empty:
-    #     csv_save_path = "/home/neojetson/Projects/Main_Pipeline/results.csv"
-    #     camera.df.to_csv(csv_save_path, index=False)
-    #     print(f"CSV file saved successfully at: {csv_save_path}")
-    # else:
-    #     print("DataFrame is empty or not defined. Cannot save CSV.")
-    
-    # Use asyncio to run the send_metadata_to_socket function in the main event loop
-    # asyncio.run(send_metadata_to_socket(metadata))
-    # Instead of using asyncio.run, we'll use the event loop associated with the main thread
-    # loop = asyncio.get_event_loop()
-    # loop.call_soon_threadsafe(asyncio.create_task, send_metadata_to_socket(metadata))
-
-    # return metadata
-
-
-# Handle connection and disconnection events
-# @sio.event
-# async def connect(sid, environ):
-#     print("Client connected:", sid)
-#     await sio.emit('connect', {'data': 'Connected successfully!'}, to=sid)
-
-
-# @sio.event
-# async def disconnect(sid):
-#     print("Client disconnected:", sid)
-        
-
 if __name__ == "__main__":
     # Run FastAPI server with Uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

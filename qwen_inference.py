@@ -5,11 +5,12 @@ import io
 
 class ImageProcessor:
     def __init__(self):
-        # self.api_url = 'http://164.52.193.57:4000/process/' # Server URL
-        # self.api_url = 'http://192.168.29.134:4000/process/'
-        self.api_url = 'http://164.52.202.253:4000/process/'
+        self.api_url = 'http://192.168.29.134:4000/process/' # Local Server URL
+        # self.api_url = 'http://164.52.202.253:4000/process/'
 
-    def process_image_from_array(self, image_array, new_size=(800, 600), text_input='', frame_name="default_image"):
+    # def process_image_from_array(self, image_array, new_size=(800, 600), text_input='', frame_name="default_image"):
+    def process_image_from_array(self, image_array, new_size=(720, 1200), text_input='', frame_name="default_image"):
+
         # Convert numpy array to PIL Image
         img = Image.fromarray(image_array)
         
