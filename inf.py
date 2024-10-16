@@ -496,6 +496,7 @@ class CameraController:
         self.current_track_id = None
         self.MAX_CROPPED_IMAGES = 20
         self.product_detected = False
+        self.inference_done = False
 
         self.blur_analyzer = BlurAnalysis()  # Initialize BlurAnalysis class
         self.optimal_threshold = None       # Store the estimated threshold
@@ -653,62 +654,114 @@ class CameraController:
                             # print(data)
 
                         if data is not None and isinstance(data, dict) and "bboxes" in data:
-                            start_time = time.time()
                             if data["bboxes"]:  # If bounding boxes are found, indicating a product is detected
-                                if not self.product_detected:  # If the product wasn't previously detected
-                                    self.reset_product_analysis()  # Reset analysis for the new product
-                                    self.product_detected = True  # Set the flag to indicate the product is detected
+                                # Here, we assume the first bounding box is the current product
+                                if not self.product_detected:
+                                    self.reset_product_analysis()
+                                    self.product_detected = True
+                                    self.current_track_id = data.get("track_id", None)  # Save the track ID
+                                    self.inference_done = False  # Reset the inference flag for the new product
+                                    print(f"New product detected with Track ID: {self.current_track_id}")
 
-                                # Get the first bounding box (for simplicity)
                                 self.bbox = data["bboxes"][0]
                                 self.crop_and_compute_blur(image_bgr)
 
                                 if self.cropped_image is not None:
                                     self.cropped_images.append(self.cropped_image)
 
-                                    # Print the sharpness score for the current cropped image
-                                    current_sharpness_score = self.blur_analyzer.tenengrad_sharpness(cv2.cvtColor(self.cropped_image, cv2.COLOR_BGR2GRAY))
-                                    print(f"Current Sharpness Score: {current_sharpness_score:.2f}")
-
                                     if len(self.cropped_images) > self.MAX_CROPPED_IMAGES:
-                                        self.cropped_images.pop(0)  # Remove oldest image if limit reached
+                                        self.cropped_images.pop(0)
 
                                     # Estimate threshold after collecting enough cropped images
                                     if len(self.cropped_images) > 10 and self.optimal_threshold is None:
-                                        print(f"Collected {len(self.cropped_images)} images, estimating optimal threshold...")
                                         self.optimal_threshold = self.blur_analyzer.estimate(self.cropped_images)
                                         print(f"Optimal Threshold Estimated: {self.optimal_threshold:.2f}")
-                                        self.cropped_images.clear()  # Clear the array after estimation
+                                        self.cropped_images.clear()
 
                                     # If threshold is estimated, classify the frame
                                     if self.optimal_threshold is not None:
                                         classification = self.blur_analyzer.predict(self.cropped_image, self.optimal_threshold)
-                                        print(f"Image Classification: {classification}")
 
-                                        # If the image is classified as "Non-Blurry", check if it's the sharpest image
                                         if classification == "Non-Blurry":
                                             current_blur_score = self.blur_analyzer.tenengrad_sharpness(cv2.cvtColor(self.cropped_image, cv2.COLOR_BGR2GRAY))
-                                            print(f"Current Blur Score: {current_blur_score:.2f}")
 
                                             # Keep the sharpest image (highest blur score)
                                             if current_blur_score > self.best_blur_score:
-                                                end_time = time.time()
-                                                print(f"New best image with blur score: {current_blur_score:.2f}, time: {end_time - start_time}")
                                                 self.best_blur_score = current_blur_score
                                                 self.best_image = self.cropped_image
 
                             else:
-                                # If no bounding box found (i.e., product is removed), reset everything
-                                if self.product_detected:  # Only reset if a product was being tracked
+                                # If no bounding box found, reset everything
+                                if self.product_detected:
                                     print("Product removed, resetting analysis.")
                                     self.reset_product_analysis()
-                                    self.product_detected = False  # Reset the detection flag
+                                    self.product_detected = False
+                                    self.inference_done = False  # Reset inference flag
 
                         # If a sharp image is found and inference is not in progress, trigger inference
-                        if self.best_image is not None and not self.processing_in_progress:
+                        if self.best_image is not None and not self.inference_done:
                             print(f"Best image found with blur score {self.best_blur_score}, triggering inference.")
                             self.trigger_processing_in_background(self.best_image)  # Use the sharpest image
-                            self.reset_product_analysis()
+                            self.inference_done = True  # Mark inference as done for this product
+                            print("Inference completed for current product.")
+
+                        # if data is not None and isinstance(data, dict) and "bboxes" in data:
+                        #     start_time = time.time()
+                        #     if data["bboxes"]:  # If bounding boxes are found, indicating a product is detected
+                        #         if not self.product_detected:  # If the product wasn't previously detected
+                        #             self.reset_product_analysis()  # Reset analysis for the new product
+                        #             self.product_detected = True  # Set the flag to indicate the product is detected
+
+                        #         # Get the first bounding box (for simplicity)
+                        #         self.bbox = data["bboxes"][0]
+                        #         self.crop_and_compute_blur(image_bgr)
+
+                        #         if self.cropped_image is not None:
+                        #             self.cropped_images.append(self.cropped_image)
+
+                        #             # Print the sharpness score for the current cropped image
+                        #             current_sharpness_score = self.blur_analyzer.tenengrad_sharpness(cv2.cvtColor(self.cropped_image, cv2.COLOR_BGR2GRAY))
+                        #             print(f"Current Sharpness Score: {current_sharpness_score:.2f}")
+
+                        #             if len(self.cropped_images) > self.MAX_CROPPED_IMAGES:
+                        #                 self.cropped_images.pop(0)  # Remove oldest image if limit reached
+
+                        #             # Estimate threshold after collecting enough cropped images
+                        #             if len(self.cropped_images) > 10 and self.optimal_threshold is None:
+                        #                 print(f"Collected {len(self.cropped_images)} images, estimating optimal threshold...")
+                        #                 self.optimal_threshold = self.blur_analyzer.estimate(self.cropped_images)
+                        #                 print(f"Optimal Threshold Estimated: {self.optimal_threshold:.2f}")
+                        #                 self.cropped_images.clear()  # Clear the array after estimation
+
+                        #             # If threshold is estimated, classify the frame
+                        #             if self.optimal_threshold is not None:
+                        #                 classification = self.blur_analyzer.predict(self.cropped_image, self.optimal_threshold)
+                        #                 print(f"Image Classification: {classification}")
+
+                        #                 # If the image is classified as "Non-Blurry", check if it's the sharpest image
+                        #                 if classification == "Non-Blurry":
+                        #                     current_blur_score = self.blur_analyzer.tenengrad_sharpness(cv2.cvtColor(self.cropped_image, cv2.COLOR_BGR2GRAY))
+                        #                     print(f"Current Blur Score: {current_blur_score:.2f}")
+
+                        #                     # Keep the sharpest image (highest blur score)
+                        #                     if current_blur_score > self.best_blur_score:
+                        #                         end_time = time.time()
+                        #                         print(f"New best image with blur score: {current_blur_score:.2f}, time: {end_time - start_time}")
+                        #                         self.best_blur_score = current_blur_score
+                        #                         self.best_image = self.cropped_image
+
+                        #     else:
+                        #         # If no bounding box found (i.e., product is removed), reset everything
+                        #         if self.product_detected:  # Only reset if a product was being tracked
+                        #             print("Product removed, resetting analysis.")
+                        #             self.reset_product_analysis()
+                        #             self.product_detected = False  # Reset the detection flag
+
+                        # # If a sharp image is found and inference is not in progress, trigger inference
+                        # if self.best_image is not None and not self.processing_in_progress:
+                        #     print(f"Best image found with blur score {self.best_blur_score}, triggering inference.")
+                        #     self.trigger_processing_in_background(self.best_image)  # Use the sharpest image
+                        #     self.reset_product_analysis()
 
                 # Calculate sleep time to maintain desired FPS
                 elapsed_time = time.time() - start_time
@@ -728,6 +781,7 @@ class CameraController:
         self.best_blur_score = -1
         self.optimal_threshold = None
         self.current_track_id = None
+        self.inference_done = False
 
 
 
